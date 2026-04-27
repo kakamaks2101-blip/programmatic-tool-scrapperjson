@@ -5,7 +5,7 @@ import requests
 st.set_page_config(page_title="Programmatic Scraper", layout="wide")
 
 st.title("🚀 Programmatic Sellers.json Expert")
-st.write("Вставте URL, щоб розділити файл на Direct Publishers та Intermediaries.")
+st.write("Вставте URL та ключові слова (через кому або рядок).")
 
 @st.cache_data(ttl=3600)
 def fetch_data(url):
@@ -20,38 +20,54 @@ def fetch_data(url):
         return None
 
 # --- UI ---
-url_input = st.text_input("Вставте URL (наприклад, https://admixer.com/sellers.json)")
-keyword_search = st.text_input("Пошук по ключу (залиште порожнім, щоб завантажити все)")
+url_input = st.text_input("Вставте URL", "https://admixer.com/sellers.json")
+keywords_area = st.text_area("Ключові слова (назви або домени)", help="Можна вводити по одному в рядок або через кому")
 
 if st.button("Обробити файл"):
     if url_input:
         with st.spinner('Магія парсингу...'):
             df = fetch_data(url_input)
             
-            if df is not None:
-                # Якщо введено ключове слово — фільтруємо
-                if keyword_search:
-                    df['search'] = df['name'].astype(str).lower() + " " + df['domain'].astype(str).lower()
-                    df = df[df['search'].str.contains(keyword_search.lower(), na=False)]
+            if df is not None and not df.empty:
+                # Виправляємо помилку Attribute Error (додаємо .str)
+                df['name'] = df['name'].fillna('').astype(str)
+                df['domain'] = df['domain'].fillna('').astype(str)
+                df['seller_type'] = df['seller_type'].fillna('').astype(str).str.upper()
                 
-                # Розділяємо на два типи
-                pubs = df[df['seller_type'].str.upper() == 'PUBLISHER']
-                ints = df[df['seller_type'].str.upper() == 'INTERMEDIARY']
+                # Пошук за декількома ключами
+                if keywords_area:
+                    # Розбиваємо введені дані на список чистих ключів
+                    search_keys = [k.strip().lower() for k in keywords_area.replace(',', '\n').split('\n') if k.strip()]
+                    
+                    if search_keys:
+                        # Створюємо поле для пошуку
+                        search_content = df['name'].str.lower() + " " + df['domain'].str.lower()
+                        # Фільтруємо: хоча б один ключ має бути в рядку
+                        pattern = '|'.join(search_keys)
+                        df = df[search_content.str.contains(pattern, na=False)]
                 
-                st.success(f"Готово! Знайдено {len(pubs)} паблішерів та {len(ints)} посередників.")
+                # Розділяємо на типи
+                pubs = df[df['seller_type'] == 'PUBLISHER']
+                ints = df[df['seller_type'] == 'INTERMEDIARY']
+                
+                st.success(f"Знайдено: {len(pubs)} паблішерів та {len(ints)} посередників.")
                 
                 col1, col2 = st.columns(2)
                 
                 with col1:
                     st.subheader("📁 Direct Publishers")
-                    st.dataframe(pubs[['seller_id', 'name', 'domain']].head(100)) # Прев'ю
-                    csv_p = pubs[['seller_id', 'name', 'domain']].to_csv(index=False).encode('utf-8')
-                    st.download_button("Завантажити PUBLISHERS.csv", csv_p, "publishers.csv", "text/csv")
+                    st.dataframe(pubs[['seller_id', 'name', 'domain']].head(100), use_container_width=True)
+                    if not pubs.empty:
+                        csv_p = pubs[['seller_id', 'name', 'domain']].to_csv(index=False).encode('utf-8')
+                        st.download_button("Завантажити PUBLISHERS.csv", csv_p, "publishers.csv", "text/csv")
                 
                 with col2:
                     st.subheader("📂 Intermediaries")
-                    st.dataframe(ints[['seller_id', 'name', 'domain']].head(100)) # Прев'ю
-                    csv_i = ints[['seller_id', 'name', 'domain']].to_csv(index=False).encode('utf-8')
-                    st.download_button("Завантажити INTERMEDIARIES.csv", csv_i, "intermediaries.csv", "text/csv")
+                    st.dataframe(ints[['seller_id', 'name', 'domain']].head(100), use_container_width=True)
+                    if not ints.empty:
+                        csv_i = ints[['seller_id', 'name', 'domain']].to_csv(index=False).encode('utf-8')
+                        st.download_button("Завантажити INTERMEDIARIES.csv", csv_i, "intermediaries.csv", "text/csv")
+            elif df is not None and df.empty:
+                st.warning("Файл порожній або не містить селлерів.")
     else:
         st.warning("Будь ласка, вкажіть URL.")
