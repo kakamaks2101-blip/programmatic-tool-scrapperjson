@@ -1,73 +1,91 @@
 import streamlit as st
 import pandas as pd
 import requests
+import concurrent.futures
 
-st.set_page_config(page_title="Programmatic Scraper", layout="wide")
+st.set_page_config(page_title="Programmatic Pro Tool", layout="wide")
 
-st.title("🚀 Programmatic Sellers.json Expert")
-st.write("Вставте URL та ключові слова (через кому або рядок).")
+st.title("🚀 Multi-SSP Professional Scraper")
+st.write("Масовий пошук та фільтрація по декількох sellers.json.")
 
-@st.cache_data(ttl=3600)
-def fetch_data(url):
+# Функція для завантаження одного SSP
+def fetch_one_ssp(url):
+    url = url.strip()
+    if not url:
+        return pd.DataFrame()
     try:
-        response = requests.get(url.strip(), timeout=20)
+        response = requests.get(url, timeout=15)
         response.raise_for_status()
         data = response.json()
-        df = pd.DataFrame(data.get('sellers', []))
+        sellers = data.get('sellers', [])
+        if not sellers:
+            return pd.DataFrame()
+        
+        df = pd.DataFrame(sellers)
+        # Додаємо джерело, щоб розуміти звідки дані
+        df['ssp_source'] = url.replace('https://', '').replace('/sellers.json', '')
         return df
     except Exception as e:
-        st.error(f"Помилка завантаження: {e}")
-        return None
+        # У разі помилки одного лінка, просто ігноруємо його, щоб не зупиняти весь процес
+        return pd.DataFrame()
 
-# --- UI ---
-url_input = st.text_input("Вставте URL", "https://admixer.com/sellers.json")
-keywords_area = st.text_area("Ключові слова (назви або домени)", help="Можна вводити по одному в рядок або через кому")
+# --- ПАНЕЛЬ НАЛАШТУВАНЬ (Sidebar) ---
+with st.sidebar:
+    st.header("Вхідні дані")
+    urls_input = st.text_area("Список URL sellers.json (по одному в рядок)", 
+                              placeholder="https://admixer.com/sellers.json\nhttps://openx.com/sellers.json")
+    
+    keywords_input = st.text_area("Ключові слова для пошуку", 
+                                  placeholder="Amagi, Google, News",
+                                  help="Можна через кому або з нового рядка. Залиште порожнім для повного дампу.")
 
-if st.button("Обробити файл"):
-    if url_input:
-        with st.spinner('Магія парсингу...'):
-            df = fetch_data(url_input)
-            
-            if df is not None and not df.empty:
-                # Виправляємо помилку Attribute Error (додаємо .str)
-                df['name'] = df['name'].fillna('').astype(str)
-                df['domain'] = df['domain'].fillna('').astype(str)
-                df['seller_type'] = df['seller_type'].fillna('').astype(str).str.upper()
-                
-                # Пошук за декількома ключами
-                if keywords_area:
-                    # Розбиваємо введені дані на список чистих ключів
-                    search_keys = [k.strip().lower() for k in keywords_area.replace(',', '\n').split('\n') if k.strip()]
-                    
-                    if search_keys:
-                        # Створюємо поле для пошуку
-                        search_content = df['name'].str.lower() + " " + df['domain'].str.lower()
-                        # Фільтруємо: хоча б один ключ має бути в рядку
-                        pattern = '|'.join(search_keys)
-                        df = df[search_content.str.contains(pattern, na=False)]
-                
-                # Розділяємо на типи
-                pubs = df[df['seller_type'] == 'PUBLISHER']
-                ints = df[df['seller_type'] == 'INTERMEDIARY']
-                
-                st.success(f"Знайдено: {len(pubs)} паблішерів та {len(ints)} посередників.")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader("📁 Direct Publishers")
-                    st.dataframe(pubs[['seller_id', 'name', 'domain']].head(100), use_container_width=True)
-                    if not pubs.empty:
-                        csv_p = pubs[['seller_id', 'name', 'domain']].to_csv(index=False).encode('utf-8')
-                        st.download_button("Завантажити PUBLISHERS.csv", csv_p, "publishers.csv", "text/csv")
-                
-                with col2:
-                    st.subheader("📂 Intermediaries")
-                    st.dataframe(ints[['seller_id', 'name', 'domain']].head(100), use_container_width=True)
-                    if not ints.empty:
-                        csv_i = ints[['seller_id', 'name', 'domain']].to_csv(index=False).encode('utf-8')
-                        st.download_button("Завантажити INTERMEDIARIES.csv", csv_i, "intermediaries.csv", "text/csv")
-            elif df is not None and df.empty:
-                st.warning("Файл порожній або не містить селлерів.")
+# --- ОСНОВНА ЛОГІКА ---
+if st.button("🔥 Запустити масову обробку"):
+    urls = [u.strip() for u in urls_input.split('\n') if u.strip()]
+    
+    if not urls:
+        st.warning("Будь ласка, додайте хоча б одне посилання.")
     else:
-        st.warning("Будь ласка, вкажіть URL.")
+        with st.spinner(f'Обробляємо {len(urls)} джерел...'):
+            # Паралельне завантаження для швидкості
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                results_list = list(executor.map(fetch_one_ssp, urls))
+            
+            # Об'єднуємо всі результати в одну велику таблицю
+            if any(not d.empty for d in results_list):
+                all_data = pd.concat(results_list, ignore_index=True)
+                
+                # Очистка та нормалізація даних
+                for col in ['name', 'domain', 'seller_type', 'seller_id']:
+                    if col in all_data.columns:
+                        all_data[col] = all_data[col].fillna('').astype(str)
+                
+                # Фільтрація за ключами, якщо вони є
+                if keywords_input:
+                    keys = [k.strip().lower() for k in keywords_input.replace(',', '\n').split('\n') if k.strip()]
+                    if keys:
+                        search_content = all_data['name'].str.lower() + " " + all_data['domain'].str.lower()
+                        pattern = '|'.join(keys)
+                        all_data = all_data[search_content.str.contains(pattern, na=False)]
+
+                if not all_data.empty:
+                    st.success(f"Знайдено всього записів: {len(all_data)}")
+                    
+                    # Розподіл на Direct та Intermediary
+                    pubs = all_data[all_data['seller_type'].str.upper() == 'PUBLISHER']
+                    ints = all_data[all_data['seller_type'].str.upper() == 'INTERMEDIARY']
+                    
+                    # Вивід результатів
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.subheader("📁 Direct Publishers")
+                        st.write(f"Знайдено: {len(pubs)}")
+                        st.dataframe(pubs[['seller_id', 'name', 'domain', 'ssp_source']].head(100), use_container_width=True)
+                        if not pubs.empty:
+                            csv_p = pubs.to_csv(index=False).encode('utf-8')
+                            st.download_button("Завантажити PUBLISHERS.csv", csv_p, "publishers.csv", "text/csv")
+                    
+                    with col2:
+                        st.subheader("📂 Intermediaries")
+                        st.write(f
