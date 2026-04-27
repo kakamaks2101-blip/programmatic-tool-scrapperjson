@@ -88,4 +88,12 @@ if st.button("🔥 Запустити масову обробку"):
                     
                     with col2:
                         st.subheader("📂 Intermediaries")
-                        st.write(f
+                        st.write(f"Знайдено: {len(ints)}")
+                        st.dataframe(ints[['seller_id', 'name', 'domain', 'ssp_source']].head(100), use_container_width=True)
+                        if not ints.empty:
+                            csv_i = ints.to_csv(index=False).encode('utf-8')
+                            st.download_button("Завантажити INTERMEDIARIES.csv", csv_i, "intermediaries.csv", "text/csv")
+                else:
+                    st.info("Нічого не знайдено за вашими ключами.")
+            else:
+                st.error("Не вдалося отримати дані з вказаних посилань.")
